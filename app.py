@@ -1,36 +1,23 @@
 import os
-import sys
 import traceback
-import gc
-import torch
+import requests
 from flask import Flask, request, jsonify
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 app = Flask(__name__)
 
-MODEL_NAME = "cssupport/t5-small-awesome-text-to-sql"
+# --- CONFIGURATION ---
+API_URL = (
+    "https://api-inference.huggingface.co/models/cssupport/t5-small-awesome-text-to-sql"
+)
 
-print(f"Loading model: {MODEL_NAME}...")
+# Get token from environment or string (for testing)
+HF_API_KEY = os.environ.get("HF_API_KEY")
+headers = {"Authorization": f"Bearer {HF_API_KEY}"}
 
-try:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
-    # Load heavy model first
-    _model_heavy = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
-
-    # Quantize to 8-bit (shrinks memory usage by ~50%)
-    model = torch.quantization.quantize_dynamic(
-        _model_heavy, {torch.nn.Linear}, dtype=torch.qint8
-    )
-
-    # Cleanup heavy model to free RAM
-    del _model_heavy
-    gc.collect()
-
-    print("Model loaded and quantized successfully.")
-except Exception as e:
-    print(f"CRITICAL ERROR: Failed to load model. {e}")
-    sys.exit(1)
+def query_huggingface(payload):
+    response = requests.post(API_URL, headers=headers, json=payload)
+    return response.json()
 
 
 @app.route("/process-voice", methods=["POST"])
@@ -43,24 +30,29 @@ def process_voice():
         voice_prompt = data.get("prompt", "")
         print(f"Received prompt: {voice_prompt}")
 
-        input_text = f"translate to SQL: {voice_prompt}"
+        # 1. Prepare Payload
+        payload = {
+            "inputs": f"translate to SQL: {voice_prompt}",
+            "options": {"wait_for_model": True},
+        }
 
-        inputs = tokenizer(
-            input_text,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=512,
-        )
+        # 2. Call API
+        output = query_huggingface(payload)
 
-        outputs = model.generate(
-            **inputs,
-            max_length=512,
-            num_beams=4,
-            early_stopping=True,
-        )
+        # 3. Parse Response
+        generated_sql = "Error generating SQL"
 
-        generated_sql = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Hugging Face returns a list like [{'generated_text': 'SELECT...'}]
+        if isinstance(output, list) and len(output) > 0:
+            generated_sql = output[0].get("generated_text", generated_sql)
+
+        # Handle errors (e.g. model loading)
+        elif isinstance(output, dict) and "error" in output:
+            print(f"API Error: {output}")
+            return jsonify(
+                {"status": "error", "message": "AI is warming up, try again in 10s"}
+            ), 503
+
         print(f"Generated SQL: {generated_sql}")
 
         return jsonify({"status": "success", "message": f"SQL: {generated_sql}"}), 200
@@ -68,7 +60,7 @@ def process_voice():
     except Exception as e:
         print("Error processing request:")
         traceback.print_exc()
-        return jsonify({"status": "error", "message": f"Server Error: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": "Internal Server Error"}), 500
 
 
 if __name__ == "__main__":
