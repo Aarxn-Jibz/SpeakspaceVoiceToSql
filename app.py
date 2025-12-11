@@ -1,10 +1,16 @@
 import os
+import traceback
 from flask import Flask, request, jsonify
 from huggingface_hub import InferenceClient
 
 app = Flask(__name__)
 
+# Check if Key exists
 HF_API_KEY = os.environ.get("HF_API_KEY")
+if not HF_API_KEY:
+    print("⚠️ WARNING: HF_API_KEY is missing from Environment Variables!")
+
+# Initialize Client
 client = InferenceClient(token=HF_API_KEY, timeout=120)
 
 
@@ -16,6 +22,9 @@ def process_voice():
             return jsonify({"error": "Invalid payload"}), 400
 
         voice_prompt = data.get("prompt", "")
+
+        # Simple debugging print
+        print(f"Processing: {voice_prompt}")
 
         prompt_template = (
             "Task: Translate natural language to SQL.\n\n"
@@ -37,7 +46,10 @@ def process_voice():
         return jsonify({"status": "success", "message": f"SQL: {generated_sql}"}), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Server Error: {str(e)}"}), 500
+        # Print full error to Render Logs
+        traceback.print_exc()
+        # Return the specific error type to the user (repr)
+        return jsonify({"status": "error", "message": f"Server Error: {repr(e)}"}), 500
 
 
 if __name__ == "__main__":
