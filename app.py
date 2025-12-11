@@ -6,9 +6,8 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# UPDATED URL: Using 'router' instead of 'api-inference'
-# We use Mistral because it is smarter at SQL than T5
-API_URL = "https://router.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
+# We use Google's model because it is UNGATED (No license acceptance needed)
+API_URL = "https://router.huggingface.co/models/google/flan-t5-large"
 
 HF_API_KEY = os.environ.get("HF_API_KEY")
 headers = {"Authorization": f"Bearer {HF_API_KEY}"}
@@ -19,20 +18,23 @@ def query_huggingface(payload):
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
 
-        # DEBUG: Print what we got back
+        # DEBUG: Print status to logs
         print(f"📥 Status: {response.status_code}")
 
-        # Handle "Model Loading" (Common on free tier)
+        # 1. Handle "Loading" State
         if response.status_code == 503:
-            return {
-                "error": "Model is loading",
-                "estimated_time": response.json().get("estimated_time", 20),
-            }
+            return {"error": "warming_up", "raw": response.text}
 
-        return response.json()
+        # 2. Handle Success
+        if response.status_code == 200:
+            return response.json()
+
+        # 3. Handle Errors (404, 401, 500)
+        # We return the RAW TEXT so you can see exactly what HF is saying
+        return {"error": f"HF Error {response.status_code}", "raw": response.text}
+
     except Exception as e:
-        print(f"Network Error: {e}")
-        return {"error": str(e)}
+        return {"error": f"Network Error: {str(e)}"}
 
 
 @app.route("/process-voice", methods=["POST"])
@@ -45,39 +47,36 @@ def process_voice():
         voice_prompt = data.get("prompt", "")
         print(f"🎤 Prompt: {voice_prompt}")
 
-        # Mistral uses [INST] format
-        prompt = (
-            f"<s>[INST] You are a SQL expert. Convert this question to SQL. "
-            f"Return ONLY the SQL query. Do not explain.\n\n"
-            f"Question: {voice_prompt} [/INST]\n"
-            f"SELECT"
+        # Flan-T5 needs examples to know it should write SQL
+        prompt_template = (
+            "Task: Translate natural language to SQL.\n\n"
+            "Input: Show me users from London\n"
+            "SQL: SELECT * FROM users WHERE city = 'London'\n\n"
+            "Input: Count the number of products with price over 50\n"
+            "SQL: SELECT COUNT(*) FROM products WHERE price > 50\n\n"
+            f"Input: {voice_prompt}\n"
+            "SQL: "
         )
 
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": 100,
-                "return_full_text": False,
-                "temperature": 0.1,
-            },
-            "options": {"wait_for_model": True},
-        }
+        payload = {"inputs": prompt_template, "options": {"wait_for_model": True}}
 
         output = query_huggingface(payload)
 
         # Logic to extract text safely
         generated_sql = "Error"
 
+        # Success Case
         if isinstance(output, list) and len(output) > 0:
-            # Mistral returns list of dicts
-            raw_text = output[0].get("generated_text", "")
-            generated_sql = "SELECT " + raw_text.strip()
+            generated_sql = output[0].get("generated_text", "Error").strip()
 
+        # Error Case
         elif isinstance(output, dict) and "error" in output:
             error_msg = output.get("error")
-            print(f"⚠️ API Error: {error_msg}")
+            raw_text = output.get("raw", "")
 
-            if "loading" in str(error_msg).lower():
+            print(f"⚠️ API Issue: {error_msg}")
+
+            if "warming_up" in str(error_msg):
                 return jsonify(
                     {
                         "status": "error",
@@ -85,9 +84,12 @@ def process_voice():
                     }
                 ), 503
 
-            # If we get the router error again, it will show here
+            # This will show you the exact error from HF if it fails
             return jsonify(
-                {"status": "error", "message": f"AI Error: {error_msg}"}
+                {
+                    "status": "error",
+                    "message": f"AI Error: {error_msg}. Raw: {raw_text[:50]}...",
+                }
             ), 500
 
         print(f"🤖 SQL: {generated_sql}")
