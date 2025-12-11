@@ -6,8 +6,8 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# We use Google's model because it is UNGATED (No license acceptance needed)
-API_URL = "https://router.huggingface.co/models/google/flan-t5-large"
+# CORRECT URL: Needs '/hf-inference' in the path
+API_URL = "https://router.huggingface.co/hf-inference/models/google/flan-t5-large"
 
 HF_API_KEY = os.environ.get("HF_API_KEY")
 headers = {"Authorization": f"Bearer {HF_API_KEY}"}
@@ -18,19 +18,18 @@ def query_huggingface(payload):
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
 
-        # DEBUG: Print status to logs
+        # DEBUG STATUS
         print(f"📥 Status: {response.status_code}")
 
-        # 1. Handle "Loading" State
+        # Handle "Loading"
         if response.status_code == 503:
-            return {"error": "warming_up", "raw": response.text}
+            return {"error": "warming_up"}
 
-        # 2. Handle Success
+        # Handle Success
         if response.status_code == 200:
             return response.json()
 
-        # 3. Handle Errors (404, 401, 500)
-        # We return the RAW TEXT so you can see exactly what HF is saying
+        # Handle Errors
         return {"error": f"HF Error {response.status_code}", "raw": response.text}
 
     except Exception as e:
@@ -47,7 +46,6 @@ def process_voice():
         voice_prompt = data.get("prompt", "")
         print(f"🎤 Prompt: {voice_prompt}")
 
-        # Flan-T5 needs examples to know it should write SQL
         prompt_template = (
             "Task: Translate natural language to SQL.\n\n"
             "Input: Show me users from London\n"
@@ -62,18 +60,13 @@ def process_voice():
 
         output = query_huggingface(payload)
 
-        # Logic to extract text safely
         generated_sql = "Error"
 
-        # Success Case
         if isinstance(output, list) and len(output) > 0:
             generated_sql = output[0].get("generated_text", "Error").strip()
 
-        # Error Case
         elif isinstance(output, dict) and "error" in output:
             error_msg = output.get("error")
-            raw_text = output.get("raw", "")
-
             print(f"⚠️ API Issue: {error_msg}")
 
             if "warming_up" in str(error_msg):
@@ -84,12 +77,8 @@ def process_voice():
                     }
                 ), 503
 
-            # This will show you the exact error from HF if it fails
             return jsonify(
-                {
-                    "status": "error",
-                    "message": f"AI Error: {error_msg}. Raw: {raw_text[:50]}...",
-                }
+                {"status": "error", "message": f"AI Error: {error_msg}"}
             ), 500
 
         print(f"🤖 SQL: {generated_sql}")
