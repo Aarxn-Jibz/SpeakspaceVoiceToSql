@@ -6,30 +6,30 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# CORRECT URL: Needs '/hf-inference' in the path
-API_URL = "https://router.huggingface.co/hf-inference/models/google/flan-t5-large"
+# NEW ENDPOINT: This is the new OpenAI-compatible router
+API_URL = "https://router.huggingface.co/v1/chat/completions"
 
 HF_API_KEY = os.environ.get("HF_API_KEY")
-headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+headers = {"Authorization": f"Bearer {HF_API_KEY}", "Content-Type": "application/json"}
 
 
 def query_huggingface(payload):
-    print(f"⚡ Sending to: {API_URL}")
+    print(f"⚡ Sending to Router: {API_URL}")
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
 
-        # DEBUG STATUS
+        # DEBUG: Print status
         print(f"📥 Status: {response.status_code}")
 
-        # Handle "Loading"
+        # 1. Handle "Loading"
         if response.status_code == 503:
             return {"error": "warming_up"}
 
-        # Handle Success
+        # 2. Handle Success
         if response.status_code == 200:
             return response.json()
 
-        # Handle Errors
+        # 3. Handle Errors
         return {"error": f"HF Error {response.status_code}", "raw": response.text}
 
     except Exception as e:
@@ -46,26 +46,34 @@ def process_voice():
         voice_prompt = data.get("prompt", "")
         print(f"🎤 Prompt: {voice_prompt}")
 
-        prompt_template = (
-            "Task: Translate natural language to SQL.\n\n"
-            "Input: Show me users from London\n"
-            "SQL: SELECT * FROM users WHERE city = 'London'\n\n"
-            "Input: Count the number of products with price over 50\n"
-            "SQL: SELECT COUNT(*) FROM products WHERE price > 50\n\n"
-            f"Input: {voice_prompt}\n"
-            "SQL: "
-        )
-
-        payload = {"inputs": prompt_template, "options": {"wait_for_model": True}}
+        # New API requires "messages" format (OpenAI Style)
+        # We use Zephyr-7b-beta because it works with this new router
+        payload = {
+            "model": "HuggingFaceH4/zephyr-7b-beta",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a SQL expert. Output ONLY the SQL query. No explanation.",
+                },
+                {"role": "user", "content": f"Convert to SQL: {voice_prompt}"},
+            ],
+            "max_tokens": 100,
+            "stream": False,
+        }
 
         output = query_huggingface(payload)
 
         generated_sql = "Error"
 
-        if isinstance(output, list) and len(output) > 0:
-            generated_sql = output[0].get("generated_text", "Error").strip()
+        # Parse the new OpenAI-style response format
+        if "choices" in output and len(output["choices"]) > 0:
+            generated_sql = output["choices"][0]["message"]["content"].strip()
+            # Clean up potential markdown formatting
+            generated_sql = (
+                generated_sql.replace("```sql", "").replace("```", "").strip()
+            )
 
-        elif isinstance(output, dict) and "error" in output:
+        elif "error" in output:
             error_msg = output.get("error")
             print(f"⚠️ API Issue: {error_msg}")
 
@@ -78,7 +86,10 @@ def process_voice():
                 ), 503
 
             return jsonify(
-                {"status": "error", "message": f"AI Error: {error_msg}"}
+                {
+                    "status": "error",
+                    "message": f"AI Error: {error_msg} Raw: {output.get('raw', '')}",
+                }
             ), 500
 
         print(f"🤖 SQL: {generated_sql}")
