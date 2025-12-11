@@ -6,11 +6,9 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# We use Mistral 7B because T5 seems to be having routing issues on the free tier today.
-# Mistral is very smart and usually always active.
-API_URL = (
-    "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
-)
+# UPDATED URL: Using 'router' instead of 'api-inference'
+# We use Mistral because it is smarter at SQL than T5
+API_URL = "https://router.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
 
 HF_API_KEY = os.environ.get("HF_API_KEY")
 headers = {"Authorization": f"Bearer {HF_API_KEY}"}
@@ -23,7 +21,6 @@ def query_huggingface(payload):
 
         # DEBUG: Print what we got back
         print(f"📥 Status: {response.status_code}")
-        print(f"📥 Body: {response.text}")
 
         # Handle "Model Loading" (Common on free tier)
         if response.status_code == 503:
@@ -49,7 +46,6 @@ def process_voice():
         print(f"🎤 Prompt: {voice_prompt}")
 
         # Mistral uses [INST] format
-        # We give it a strict persona to only output SQL
         prompt = (
             f"<s>[INST] You are a SQL expert. Convert this question to SQL. "
             f"Return ONLY the SQL query. Do not explain.\n\n"
@@ -75,7 +71,6 @@ def process_voice():
         if isinstance(output, list) and len(output) > 0:
             # Mistral returns list of dicts
             raw_text = output[0].get("generated_text", "")
-            # We added "SELECT" to the prompt, so we prepend it back
             generated_sql = "SELECT " + raw_text.strip()
 
         elif isinstance(output, dict) and "error" in output:
@@ -90,6 +85,7 @@ def process_voice():
                     }
                 ), 503
 
+            # If we get the router error again, it will show here
             return jsonify(
                 {"status": "error", "message": f"AI Error: {error_msg}"}
             ), 500
