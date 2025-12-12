@@ -6,19 +6,22 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# NEW ENDPOINT: This is the new OpenAI-compatible router
+# We use the OpenAI-Compatible Router
 API_URL = "https://router.huggingface.co/v1/chat/completions"
+
+# New Model: Qwen 2.5 Coder (State of the art for SQL)
+MODEL_ID = "Qwen/Qwen2.5-Coder-32B-Instruct"
 
 HF_API_KEY = os.environ.get("HF_API_KEY")
 headers = {"Authorization": f"Bearer {HF_API_KEY}", "Content-Type": "application/json"}
 
 
 def query_huggingface(payload):
-    print(f"⚡ Sending to Router: {API_URL}")
+    print(f"⚡ Sending to: {MODEL_ID}")
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
 
-        # DEBUG: Print status
+        # DEBUG STATUS
         print(f"📥 Status: {response.status_code}")
 
         # 1. Handle "Loading"
@@ -46,18 +49,18 @@ def process_voice():
         voice_prompt = data.get("prompt", "")
         print(f"🎤 Prompt: {voice_prompt}")
 
-        # New API requires "messages" format (OpenAI Style)
-        # We use Zephyr-7b-beta because it works with this new router
+        # Qwen works best with standard Chat format
         payload = {
-            "model": "HuggingFaceH4/zephyr-7b-beta",
+            "model": MODEL_ID,
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a SQL expert. Output ONLY the SQL query. No explanation.",
+                    "content": "You are a SQL expert. Output ONLY the SQL query. No explanation. No markdown.",
                 },
                 {"role": "user", "content": f"Convert to SQL: {voice_prompt}"},
             ],
-            "max_tokens": 100,
+            "max_tokens": 150,
+            "temperature": 0.1,
             "stream": False,
         }
 
@@ -65,16 +68,16 @@ def process_voice():
 
         generated_sql = "Error"
 
-        # Parse the new OpenAI-style response format
         if "choices" in output and len(output["choices"]) > 0:
             generated_sql = output["choices"][0]["message"]["content"].strip()
-            # Clean up potential markdown formatting
+            # Clean up markdown if Qwen adds it
             generated_sql = (
                 generated_sql.replace("```sql", "").replace("```", "").strip()
             )
 
         elif "error" in output:
             error_msg = output.get("error")
+            raw_text = output.get("raw", "")
             print(f"⚠️ API Issue: {error_msg}")
 
             if "warming_up" in str(error_msg):
@@ -88,7 +91,7 @@ def process_voice():
             return jsonify(
                 {
                     "status": "error",
-                    "message": f"AI Error: {error_msg} Raw: {output.get('raw', '')}",
+                    "message": f"AI Error: {error_msg} Raw: {raw_text[:50]}...",
                 }
             ), 500
 
