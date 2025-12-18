@@ -78,3 +78,9 @@ https://speakspacevoicetosql.onrender.com/process-voice
 **API URL:** https://speakspacevoicetosql.onrender.com/process-voice
 
 **Authorization:**  Your generated user token from HuggingFace
+
+This project was built by a team of students as part of the SpeakSpace Annual Hackathon, with the aim of enabling users with no prior SQL knowledge to generate safe, structured SQL queries using natural language voice inputs.
+
+## The Team 
+
+The team consisting of Joel D’silva, Aaron Jibin, Anadhika Goswami and Anna Isson collectively focused on building a functional voice-to-SQL workflow that demonstrates how voice-first systems can execute meaningful database queries while maintaining safety, structure, and clarity.
